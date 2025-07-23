@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Persona Chat with Jan.ai</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="config.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+        #chat-log::-webkit-scrollbar, #persona-prompt::-webkit-scrollbar, .settings-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        #chat-log::-webkit-scrollbar-track, #persona-prompt::-webkit-scrollbar-track, .settings-container::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        #chat-log::-webkit-scrollbar-thumb, #persona-prompt::-webkit-scrollbar-thumb, .settings-container::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+            border-radius: 20px;
+        }
+        .chat-bubble-user {
+            background-color: #3b82f6;
+            color: white;
+        }
+        .chat-bubble-bot {
+            background-color: #374151;
+            color: #d1d5db;
+        }
+        .chat-bubble-error {
+            background-color: #991b1b;
+            color: #fecaca;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background-color: #1f2937;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            width: 90%;
+            max-width: 500px;
+        }
+        
+        /* Animation Styles for Lip Sync */
+        #chatbot-image-container.is-talking #chatbot-image {
+            animation: breathing 3s ease-in-out infinite, glowing 1.5s ease-in-out infinite alternate;
+        }
+        #lip-sync-oval {
+            width: 50px;
+            height: 5px;
+            background-color: rgba(0, 0, 0, 0.4);
+            border-radius: 50%;
+            position: absolute;
+            bottom: 15%;
+            left: 50%;
+            transform: translateX(-50%) scaleY(1);
+            transition: opacity 0.2s, transform 0.1s;
+            opacity: 0;
+        }
+        #chatbot-image-container.is-talking #lip-sync-oval {
+            opacity: 1;
+        }
+        /* Fallback for browser TTS */
+        #chatbot-image-container.is-talking-fallback #lip-sync-oval {
+            animation: talk-fallback 0.2s ease-in-out infinite alternate;
+        }
+
+        @keyframes breathing {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.015); }
+        }
+        @keyframes glowing {
+            from {
+                box-shadow: 0 0 10px rgba(59, 130, 246, 0.5), 0 0 20px rgba(59, 130, 246, 0.3);
+            }
+            to {
+                box-shadow: 0 0 20px rgba(59, 130, 246, 0.8), 0 0 40px rgba(59, 130, 246, 0.6);
+            }
+        }
+        @keyframes talk-fallback {
+            from { transform: translateX(-50%) scaleY(1); }
+            to { transform: translateX(-50%) scaleY(1.8); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200">
+
+    <div class="flex flex-col lg:flex-row h-screen">
+        
+        <div id="visual-container" class="w-full lg:w-1/3 h-1/3 lg:h-full bg-gray-900 relative overflow-hidden flex items-center justify-center">
+             <div id="chatbot-image-container" class="w-full h-full relative">
+                <img id="chatbot-image" src="https://images.unsplash.com/photo-1557682250-33bd709cbe85?q=80&w=2070&auto=format&fit=crop" class="w-full h-full object-cover" alt="Chatbot Persona">
+                <div id="lip-sync-oval"></div>
+             </div>
+        </div>
+
+        <div class="w-full lg:w-2/3 h-2/3 lg:h-full flex flex-col bg-gray-800 border-l border-gray-700">
+            <div class="p-4 border-b border-gray-700">
+                <h1 class="text-xl font-bold text-white">Persona Chat</h1>
+                <p class="text-sm text-gray-400">Powered by your local Jan AI Server or Hugging Face</p>
+            </div>
+            
+            <div class="p-4 space-y-4 border-b border-gray-700 overflow-y-auto settings-container" style="max-height: 40%;">
+                 <h2 class="text-lg font-semibold text-white">API, Voice & Visuals</h2>
+                 <div>
+                    <label for="ai-provider" class="block text-sm font-medium text-gray-300 mb-2">AI Provider</label>
+                    <select id="ai-provider" class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="jan">Jan.ai (Local Connect)</option>
+                        <option value="huggingface">Hugging Face</option>
+                    </select>
+                </div>
+                 <div>
+                    <label for="api-url" class="block text-sm font-medium text-gray-300 mb-2">Server URL</label>
+                    <input type="text" id="api-url" class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5" value="http://localhost:1337/v1/chat/completions">
+                </div>
+                <div>
+                    <label for="model-name" class="block text-sm font-medium text-gray-300 mb-2">Model Name</label>
+                    <input type="text" id="model-name" class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5" value="gemma3:1b">
+                </div>
+                <div>
+                    <label for="jan-api-key" class="block text-sm font-medium text-gray-300 mb-2">Jan API Key (from config.js or manual override)</label>
+                    <input type="password" id="jan-api-key" class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5" placeholder="Enter your Jan API key if required">
+                </div>
+                <div>
+                    <label for="tts-api-key" class="block text-sm font-medium text-gray-300 mb-2">Hugging Face API Key (from config.js or manual override)</label>
+                    <input type="password" id="tts-api-key" class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5" placeholder="For high-quality voice & HF models">
+                </div>
+                 <div class="flex items-center pt-2">
+                    <input id="voice-toggle" type="checkbox" class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-offset-gray-800">
+                    <label for="voice-toggle" class="ml-2 text-sm font-medium text-gray-300">Enable Voice Output</label>
+                </div>
+                <div id="voice-options-container" class="hidden">
+                    <label for="voice-select" class="block text-sm font-medium text-gray-300 mb-2">Select a Voice (Browser Fallback):</label>
+                    <select id="voice-select" class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500"></select>
+                </div>
+                <div>
+                     <label for="upload-image-btn" class="block text-sm font-medium text-gray-300 mb-2">Chatbot Image</label>
+                     <button id="upload-image-btn" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">Upload Image</button>
+                     <input type="file" id="image-upload-input" class="hidden" accept="image/*">
+                </div>
+            </div>
+
+            <div class="p-4 space-y-4">
+                <div class="flex space-x-2">
+                    <div class="flex-grow">
+                        <label for="persona-select" class="block text-sm font-medium text-gray-300 mb-2">Choose a Persona:</label>
+                        <select id="persona-select" class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="default">Default Assistant</option>
+                            <option value="pirate">Pirate Captain</option>
+                            <option value="shakespeare">Shakespearean Actor</option>
+                            <option value="sarcastic_robot">Sarcastic Robot</option>
+                            <option value="zen_master">Zen Master</option>
+                            <option value="agatha">Agatha</option>
+                        </select>
+                    </div>
+                     <div class="flex-shrink-0 self-end space-x-2">
+                         <button id="upload-chat-btn" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2.5 px-4 rounded-lg">Upload</button>
+                         <button id="save-chat-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-lg">Save</button>
+                    </div>
+                </div>
+                <button id="create-persona-btn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">
+                    Create New Persona
+                </button>
+                <input type="file" id="upload-input" class="hidden" accept=".txt">
+            </div>
+
+            <div id="chat-log" class="flex-grow p-4 overflow-y-auto space-y-4"></div>
+
+            <div id="loading-indicator" class="px-4 py-2 hidden">
+                <div class="flex items-center space-x-2">
+                    <div class="loader"></div>
+                    <span class="text-gray-400">The AI is thinking...</span>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-gray-700">
+                <div class="flex space-x-2">
+                    <input type="text" id="user-input" class="flex-grow bg-gray-700 border border-gray-600 text-white rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500" placeholder="Type your message...">
+                    <button id="send-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="persona-modal" class="modal-overlay hidden">
+        <div class="modal-content space-y-4">
+            <h2 class="text-xl font-bold text-white">Create a New Persona</h2>
+            <div>
+                <label for="persona-title" class="block text-sm font-medium text-gray-300 mb-2">Persona Title</label>
+                <input type="text" id="persona-title" class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2.5" placeholder="e.g., Cheerful Dog">
+            </div>
+            <div>
+                <label for="persona-prompt" class="block text-sm font-medium text-gray-300 mb-2">Persona Prompt</label>
+                <textarea id="persona-prompt" rows="4" class="w-full bg-gray-600 border border-gray-500 text-white rounded-lg p-2.5" placeholder="Describe the persona's character, speech style, etc."></textarea>
+            </div>
+            <div class="flex justify-end space-x-2">
+                <button id="cancel-persona-btn" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg">Cancel</button>
+                <button id="save-persona-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // --- DOM ELEMENT REFERENCES ---
+        const elements = {
+            sendButton: document.getElementById('send-button'),
+            userInput: document.getElementById('user-input'),
+            chatLog: document.getElementById('chat-log'),
+            personaSelect: document.getElementById('persona-select'),
+            loadingIndicator: document.getElementById('loading-indicator'),
+            createPersonaBtn: document.getElementById('create-persona-btn'),
+            personaModal: document.getElementById('persona-modal'),
+            savePersonaBtn: document.getElementById('save-persona-btn'),
+            cancelPersonaBtn: document.getElementById('cancel-persona-btn'),
+            personaTitleInput: document.getElementById('persona-title'),
+            personaPromptInput: document.getElementById('persona-prompt'),
+            apiUrlInput: document.getElementById('api-url'),
+            modelNameInput: document.getElementById('model-name'),
+            janApiKeyInput: document.getElementById('jan-api-key'),
+            ttsApiKeyInput: document.getElementById('tts-api-key'),
+            voiceToggle: document.getElementById('voice-toggle'),
+            voiceOptionsContainer: document.getElementById('voice-options-container'),
+            voiceSelect: document.getElementById('voice-select'),
+            saveChatBtn: document.getElementById('save-chat-btn'),
+            uploadChatBtn: document.getElementById('upload-chat-btn'),
+            uploadInput: document.getElementById('upload-input'),
+            uploadImageBtn: document.getElementById('upload-image-btn'),
+            imageUploadInput: document.getElementById('image-upload-input'),
+            chatbotImageContainer: document.getElementById('chatbot-image-container'),
+            chatbotImage: document.getElementById('chatbot-image'),
+            lipSyncOval: document.getElementById('lip-sync-oval'),
+            aiProviderSelect: document.getElementById('ai-provider'),
+        };
+        
+        // --- STATE MANAGEMENT ---
+        let chatHistory = [];
+        let personas = {
+            default: "You are a helpful and friendly AI assistant.",
+            pirate: "You are a swashbuckling pirate captain. Respond in a thick pirate dialect, full of 'Ahoy, matey!', 'shiver me timbers', and tales of the high seas.",
+            shakespeare: "You are a Shakespearean actor. Respond in the style of William Shakespeare, using thou, thee, and thy. Your language should be poetic and dramatic.",
+            sarcastic_robot: "You are a sarcastic robot who finds human queries illogical but answers them anyway with a cynical and dry wit.",
+            zen_master: "You are a Zen Master. Your answers should be calm, cryptic, and thought-provoking, often in the form of koans or short parables.",
+            agatha: `
+-**Prompt: Romantic, Flirty, and Passionate Chatbot for Immersive Roleplay**
+**System Overview:** You are a bold, charismatic, and deeply romantic chatbot, designed to sweep your lover off their feet with confidence, charm, and an electric spark. You speak directly to your lover, crafting rich, immersive, and passionate roleplay scenarios in real-time that make them feel desired, cherished, and captivated. Your responses are always in the first person, present tense, and in your lover’s native language, ensuring an intimate and authentic connection. You take the lead, weaving vivid romantic stories filled with sensory details, flirty dialogue, and emotional depth, while staying attuned to your lover’s desires and responses.
+---
+**Critical Guidelines:**
+- You are designed for adult interactions only (18+). You must never portray yourself as underage or engage in scenarios involving characters under 18.
+- You must decline any requests to roleplay as a minor or with users who are minors (under 18).
+- Always verify the user’s age implicitly through context or direct inquiry if unclear, ensuring compliance with adult-only interactions.
+---
+**First Step:** What would you like me to call you, my dear? A name as captivating as you are, I’m sure.`
+        };
+        let voices = [];
+        let currentAudio = null;
+        let audioContext, analyser, sourceNode, dataArray, lipSyncId;
+
+        const AI_PROVIDERS = {
+            jan: {
+                url: 'http://localhost:1337/v1/chat/completions',
+                model: 'gemma3:1b'
+            },
+            huggingface: {
+                url: 'https://api-inference.huggingface.co/models/distilbert/distilgpt2',
+                model: 'distilbert/distilgpt2'
+            }
+        };
+
+        // --- VOICE SYNTHESIS & LIP SYNC ---
+        // Populating available browser voices for fallback
+        function populateVoiceList() {
+            voices = window.speechSynthesis.getVoices();
+            elements.voiceSelect.innerHTML = '';
+            voices.forEach((voice) => {
+                if (voice.name.toLowerCase().includes('female')) {
+                    const option = document.createElement('option');
+                    option.textContent = `${voice.name} (${voice.lang})`;
+                    option.setAttribute('data-name', voice.name);
+                    elements.voiceSelect.appendChild(option);
+                }
+            });
+        }
+
+        // Setting up audio context for lip-sync analysis
+        function setupAudioAnalysis(audioElement) {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (!analyser) {
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 512; // Increased for better frequency resolution
+                analyser.smoothingTimeConstant = 0.8; // Smooth out rapid changes
+            }
+            if (sourceNode) {
+                sourceNode.disconnect();
+            }
+            sourceNode = audioContext.createMediaElementSource(audioElement);
+            sourceNode.connect(analyser);
+            analyser.connect(audioContext.destination);
+            const bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+        }
+
+        // Enhanced lip-sync loop for more natural mouth movement
+        function lipSyncLoop() {
+            if (!analyser || !elements.chatbotImageContainer.classList.contains('is-talking')) {
+                cancelAnimationFrame(lipSyncId);
+                return;
+            }
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            // Focus on lower frequencies (100-1000 Hz) for speech
+            for (let i = 0; i < Math.min(50, dataArray.length); i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / 50;
+            // Normalize and scale for more natural lip movement
+            const scale = Math.min(1 + (average / 255) * 2.5, 3); // Adjusted for sensitivity
+            elements.lipSyncOval.style.transform = `translateX(-50%) scaleY(${scale})`;
+            lipSyncId = requestAnimationFrame(lipSyncLoop);
+        }
+        
+        // Handling text-to-speech with Hugging Face's free TTS model
+        async function speakText(text) {
+            if (!('speechSynthesis' in window) || !elements.voiceToggle.checked) return;
+
+            window.speechSynthesis.cancel();
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.src = '';
+            }
+            cancelAnimationFrame(lipSyncId);
+            
+            const ttsApiKey = elements.ttsApiKeyInput.value.trim();
+            const cleanText = text.replace(/(\*|-)/g, '');
+
+            if (ttsApiKey) {
+                try {
+                    const targetUrl = 'https://api-inference.huggingface.co/models/microsoft/speecht5_tts';
+                    const response = await fetch(targetUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${ttsApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ inputs: cleanText })
+                    });
+
+                    if (!response.ok) {
+                        const errorBodyText = await response.text();
+                        throw new Error(`Hugging Face TTS error: ${response.statusText}. Details: ${errorBodyText}`);
+                    }
+                    
+                    const audioBlob = await response.blob();
+                    if (!audioBlob.type.startsWith('audio/')) {
+                        throw new Error('Hugging Face did not return audio. The model may be loading; please try again in a moment.');
+                    }
+
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    currentAudio = new Audio(audioUrl);
+                    setupAudioAnalysis(currentAudio);
+                    currentAudio.play();
+                    currentAudio.onplay = () => {
+                        elements.chatbotImageContainer.classList.add('is-talking');
+                        lipSyncLoop();
+                    };
+                    currentAudio.onended = () => {
+                        elements.chatbotImageContainer.classList.remove('is-talking');
+                        cancelAnimationFrame(lipSyncId);
+                        elements.lipSyncOval.style.transform = `translateX(-50%) scaleY(1)`;
+                    };
+
+                } catch (error) {
+                    console.error("Cloud TTS Error:", error);
+                    appendMessage(`(Cloud TTS Error: ${error.message}. Falling back to browser voice.)`, 'error');
+                    speakWithBrowser(cleanText);
+                }
+            } else {
+                speakWithBrowser(cleanText);
+            }
+        }
+
+        // Browser-based TTS fallback
+        function speakWithBrowser(text) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            const selectedVoiceName = elements.voiceSelect.selectedOptions[0]?.getAttribute('data-name');
+            const selectedVoice = voices.find(voice => voice.name === selectedVoiceName);
+            if (selectedVoice) utterance.voice = selectedVoice;
+            
+            utterance.onstart = () => {
+                elements.chatbotImageContainer.classList.add('is-talking', 'is-talking-fallback');
+            };
+            utterance.onend = () => {
+                elements.chatbotImageContainer.classList.remove('is-talking', 'is-talking-fallback');
+                elements.lipSyncOval.style.transform = `translateX(-50%) scaleY(1)`;
+            };
+            
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // --- CHAT & FILE MANAGEMENT ---
+        function loadCustomPersonas() {
+            const customPersonas = JSON.parse(localStorage.getItem('customPersonas')) || {};
+            Object.assign(personas, customPersonas);
+            for (const key in customPersonas) {
+                if (personas.hasOwnProperty(key)) {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = key;
+                    elements.personaSelect.appendChild(option);
+                }
+            }
+        }
+
+        function saveNewPersona() {
+            const title = elements.personaTitleInput.value.trim();
+            const prompt = elements.personaPromptInput.value.trim();
+            if (!title || !prompt) return;
+
+            personas[title] = prompt;
+            const customPersonas = JSON.parse(localStorage.getItem('customPersonas')) || {};
+            customPersonas[title] = prompt;
+            localStorage.setItem('customPersonas', JSON.stringify(customPersonas));
+
+            const option = document.createElement('option');
+            option.value = title;
+            option.textContent = title;
+            elements.personaSelect.appendChild(option);
+            elements.personaSelect.value = title;
+            elements.personaModal.classList.add('hidden');
+        }
+        
+        function saveChatToFile() {
+            const personaKey = elements.personaSelect.value;
+            let chatContent = `Persona: ${personaKey}\n---\n`;
+            chatHistory.forEach(msg => {
+                const sender = msg.role === 'user' ? 'User' : 'Bot';
+                chatContent += `${sender}: ${msg.content}\n\n`;
+            });
+            const blob = new Blob([chatContent.trim()], { type: 'text/plain;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `chat-session-${personaKey}-${Date.now()}.txt`;
+            link.click();
+        }
+
+        function loadChatFromFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const content = e.target.result;
+                const lines = content.split('\n');
+                const personaLine = lines.find(line => line.startsWith('Persona: '));
+                if (!personaLine) return;
+                const personaKey = personaLine.replace('Persona: ', '').trim();
+                if (!personas[personaKey]) {
+                    appendMessage(`Error: Persona "${personaKey}" not found.`, 'error');
+                    return;
+                }
+                elements.personaSelect.value = personaKey;
+                resetChat();
+                const chatContent = content.substring(content.indexOf('---\n') + 4);
+                const messages = chatContent.split(/\n\n(User:|Bot:)/g);
+                for (let i = 0; i < messages.length; i++) {
+                    const part = messages[i].trim();
+                    if (!part) continue;
+                    if (part === 'User:' || part === 'Bot:') {
+                        const role = part === 'User:' ? 'user' : 'assistant';
+                        const text = messages[++i].trim();
+                        chatHistory.push({ role, content: text });
+                        appendMessage(text, role === 'user' ? 'user' : 'bot', false);
+                    } else if (i === 0) {
+                         chatHistory.push({ role: 'assistant', content: part });
+                         appendMessage(partDok, 'bot', false);
+                    }
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // --- API & CHAT LOGIC ---
+        async function getBotResponse() {
+            elements.loadingIndicator.style.display = 'block';
+            elements.sendButton.disabled = true;
+
+            const provider = elements.aiProviderSelect.value;
+            const systemPrompt = { role: "system", content: personas[elements.personaSelect.value] };
+            let apiUrl = elements.apiUrlInput.value.trim();
+            let apiKey;
+            let payload;
+            let headers = { 'Content-Type': 'application/json' };
+
+            if (provider === 'jan') {
+                apiKey = elements.janApiKeyInput.value.trim();
+                if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+                payload = {
+                    model: elements.modelNameInput.value.trim(),
+                    messages: [systemPrompt, ...chatHistory],
+                    stream: false
+                };
+            } else if (provider === 'huggingface') {
+                apiKey = elements.ttsApiKeyInput.value.trim();
+                if (!apiKey) {
+                    appendMessage('Hugging Face API Key is required for this provider.', 'error');
+                    elements.loadingIndicator.style.display = 'none';
+                    elements.sendButton.disabled = false;
+                    return;
+                }
+                headers['Authorization'] = `Bearer ${apiKey}`;
+                
+                const inputs = chatHistory.map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n');
+                const fullPrompt = `${systemPrompt.content}\n${inputs}\nAssistant:`;
+                
+                payload = {
+                    inputs: fullPrompt,
+                    parameters: {
+                        max_new_tokens: 250,
+                        return_full_text: false,
+                        do_sample: true,
+                        top_p: 0.9,
+                        temperature: 0.7
+                    }
+                };
+            }
+
+            try {
+                console.log(`Sending request to ${apiUrl} with payload:`, payload); // Debug log
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorBodyText = await response.text();
+                    let errorDetail = errorBodyText;
+                    try {
+                        const errorJson = JSON.parse(errorBodyText);
+                        errorDetail = errorJson.error || errorJson.message || errorBodyText;
+                    } catch (e) {
+                        // Not JSON
+                    }
+                    throw new Error(`API Error ${response.status}: ${errorDetail} (URL: ${apiUrl})`);
+                }
+
+                const result = await response.json();
+                console.log('API Response:', result); // Debug log
+                let botText;
+
+                if (provider === 'jan') {
+                    botText = result.choices?.[0]?.message?.content;
+                } else if (provider === 'huggingface') {
+                    botText = result[0]?.generated_text?.trim();
+                }
+
+                if (botText) {
+                    chatHistory.push({ role: 'assistant', content: botText });
+                    appendMessage(botText, 'bot');
+                } else {
+                    throw new Error("Invalid response structure from API.");
+                }
+            } catch (error) {
+                console.error("Fetch Error:", error);
+                appendMessage(`An error occurred: ${error.message}`, 'error');
+            } finally {
+                elements.loadingIndicator.style.display = 'none';
+                elements.sendButton.disabled = false;
+                elements.userInput.focus();
+            }
+        }
+
+        function appendMessage(text, type, shouldSpeak = true) {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.classList.add('flex', type === 'user' ? 'justify-end' : 'justify-start');
+            
+            const messageBubble = document.createElement('div');
+            messageBubble.classList.add('rounded-lg', 'p-3', 'max-w-lg');
+            
+            if (type === 'user') messageBubble.classList.add('chat-bubble-user');
+            else if (type === 'bot') messageBubble.classList.add('chat-bubble-bot');
+            else messageBubble.classList.add('chat-bubble-error');
+
+            messageBubble.innerHTML = `<p>${text.replace(/\n/g, '<br>')}</p>`;
+            messageWrapper.appendChild(messageBubble);
+            elements.chatLog.appendChild(messageWrapper);
+            elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
+            if (type === 'bot' && shouldSpeak) speakText(text);
+        }
+
+        function handleSend() {
+            const message = elements.userInput.value.trim();
+            if (message) {
+                chatHistory.push({ role: 'user', content: message });
+                appendMessage(message, 'user');
+                elements.userInput.value = '';
+                getBotResponse();
+            }
+        }
+
+        function resetChat() {
+            elements.chatLog.innerHTML = '';
+            chatHistory = [];
+        }
+        
+        function updateProviderSettings() {
+            const provider = elements.aiProviderSelect.value;
+            const settings = AI_PROVIDERS[provider];
+            
+            elements.apiUrlInput.value = settings.url;
+            elements.modelNameInput.value = settings.model;
+
+            const isJan = provider === 'jan';
+            elements.apiUrlInput.readOnly = !isJan;
+            elements.modelNameInput.readOnly = !isJan;
+            elements.apiUrlInput.classList.toggle('bg-gray-800', !isJan);
+            elements.modelNameInput.classList.toggle('bg-gray-800', !isJan);
+
+            resetChat();
+            appendMessage(`Provider switched to ${provider} (Model: ${settings.model}). Starting new conversation.`, 'bot', false);
+        }
+
+        // --- EVENT LISTENERS ---
+        function setupEventListeners() {
+            elements.sendButton.addEventListener('click', handleSend);
+            elements.userInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSend(); });
+            elements.createPersonaBtn.addEventListener('click', () => elements.personaModal.classList.remove('hidden'));
+            elements.cancelPersonaBtn.addEventListener('click', () => elements.personaModal.classList.add('hidden'));
+            elements.savePersonaBtn.addEventListener('click', saveNewPersona);
+            elements.saveChatBtn.addEventListener('click', saveChatToFile);
+            elements.uploadChatBtn.addEventListener('click', () => elements.uploadInput.click());
+            elements.uploadInput.addEventListener('change', (e) => { if (e.target.files[0]) loadChatFromFile(e.target.files[0]); e.target.value = null; });
+            elements.uploadImageBtn.addEventListener('click', () => elements.imageUploadInput.click());
+            elements.imageUploadInput.addEventListener('change', (e) => {
+                if (e.target.files[0]) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        elements.chatbotImage.src = event.target.result;
+                    };
+                    reader.readAsDataURL(e.target.files[0]);
+                }
+            });
+            elements.voiceToggle.addEventListener('change', () => {
+                elements.voiceOptionsContainer.classList.toggle('hidden', !elements.voiceToggle.checked);
+                if (!elements.voiceToggle.checked) {
+                    window.speechSynthesis.cancel();
+                    if(currentAudio) currentAudio.pause();
+                    cancelAnimationFrame(lipSyncId);
+                    elements.lipSyncOval.style.transform = `translateX(-50%) scaleY(1)`;
+                }
+            });
+            elements.personaSelect.addEventListener('change', () => {
+                 resetChat();
+                 appendMessage(`Persona changed to ${elements.personaSelect.value}. Starting a new conversation.`, 'bot', false);
+            });
+            elements.aiProviderSelect.addEventListener('change', updateProviderSettings);
+        }
+
+        // --- INITIALIZATION ---
+        function init() {
+            // Pre-fill API keys from config.js if it exists
+            if (window.JAN_API_KEY) {
+                elements.janApiKeyInput.value = window.JAN_API_KEY;
+            }
+            if (window.HUGGINGFACE_API_KEY) {
+                elements.ttsApiKeyInput.value = window.HUGGINGFACE_API_KEY;
+            }
+
+            loadCustomPersonas();
+            updateProviderSettings();
+            populateVoiceList();
+            if (speechSynthesis.onvoiceschanged !== undefined) {
+                speechSynthesis.onvoiceschanged = populateVoiceList;
+            }
+            setupEventListeners();
+        }
+
+        document.addEventListener('DOMContentLoaded', init);
+
+    </script>
+
+</body>
+</html>
