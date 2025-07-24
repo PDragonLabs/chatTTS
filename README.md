@@ -64,3 +64,4 @@ nex move
 - **Performance**: The lip-sync loop is optimized to stop when audio ends, preventing unnecessary CPU usage.
 - **GitHub Pages**: The application is fully client-side (except for API calls), making it ideal for static hosting on GitHub Pages.
 
+[try it out](https://pdragonlabs.github.io/chatTTS/)
